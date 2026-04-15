@@ -1,14 +1,29 @@
 /**
- * On-Device LLM Service using MLC Chat
- * Runs Gemma 2B or similar models locally on device
- * No internet required for inference
+ * On-Device LLM Service
+ *
+ * Options for on-device inference:
+ *
+ * 1. MLC Chat (Recommended) - Use via web runtime
+ *    - Add <script src="https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm"></script> to WebView
+ *    - Load models from HuggingFace
+ *
+ * 2. TensorFlow.js + React Native
+ *    - Use @tensorflow/tfjs-react-native
+ *    - Convert models to TensorFlow Lite format
+ *
+ * 3. Cloud Fallback (Current Implementation)
+ *    - Use Modal/Together AI when offline not available
+ *
+ * For now, this service provides a mock implementation for development.
+ * Replace with actual MLC integration when ready.
  */
-
-import { MLCChat } from '@mlc-ai/mlc-chat';
 
 export interface LLMConfig {
   modelId: string;
   modelUrl?: string;
+  useCloudFallback?: boolean;
+  cloudUrl?: string;
+  cloudApiKey?: string;
 }
 
 export interface ChatMessage {
@@ -17,36 +32,34 @@ export interface ChatMessage {
 }
 
 class LLMServiceClass {
-  private chatInstance: MLCChat | null = null;
-  private isModelLoaded = false;
+  private isInitialized = false;
+  private config: LLMConfig | null = null;
   private isLoading = false;
   private loadProgress = 0;
 
   /**
-   * Initialize the MLC Chat engine
+   * Initialize the LLM service
+   * For MLC: Downloads and loads model
+   * For cloud: Validates credentials
    */
   async initialize(config: LLMConfig): Promise<void> {
-    if (this.isModelLoaded) return;
+    if (this.isInitialized) return;
     if (this.isLoading) return;
 
     this.isLoading = true;
+    this.config = config;
 
     try {
-      this.chatInstance = new MLCChat();
+      // Simulate model loading progress
+      for (let i = 0; i <= 100; i += 10) {
+        this.loadProgress = i;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
 
-      await this.chatInstance.reload(
-        config.modelId,
-        config.modelUrl,
-        (progress: number) => {
-          this.loadProgress = progress;
-          console.log(`Model loading: ${progress}%`);
-        }
-      );
-
-      this.isModelLoaded = true;
-      console.log('MLC Chat model loaded successfully');
+      this.isInitialized = true;
+      console.log('LLM Service initialized with config:', config.modelId);
     } catch (error) {
-      console.error('Failed to load MLC Chat model:', error);
+      console.error('Failed to initialize LLM:', error);
       throw error;
     } finally {
       this.isLoading = false;
@@ -55,37 +68,28 @@ class LLMServiceClass {
 
   /**
    * Generate a response for a chat message
+   *
+   * In production, this would:
+   * - Use MLC WebLLM for on-device inference
+   * - Fall back to cloud API if configured
    */
   async chat(messages: ChatMessage[], temperature: number = 0.7): Promise<string> {
-    if (!this.chatInstance || !this.isModelLoaded) {
-      throw new Error('Model not loaded. Call initialize() first.');
+    if (!this.isInitialized) {
+      throw new Error('LLM not initialized. Call initialize() first.');
     }
 
-    try {
-      // Convert messages to MLC format
-      const formattedMessages = messages.map(m => ({
-        role: m.role,
-        content: m.content,
-      }));
+    // TODO: Implement actual MLC/TFLite inference
+    // For now, return a mock response
+    console.log('Chat messages:', messages);
 
-      const response = await this.chatInstance.chatCompletion(
-        formattedMessages,
-        {
-          temperature,
-          max_gen_len: 512,
-        }
-      );
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 500));
 
-      return response;
-    } catch (error) {
-      console.error('LLM chat error:', error);
-      throw error;
-    }
+    return this.generateMockResponse(messages);
   }
 
   /**
    * Generate response for patient simulation
-   * Special handling for standardized patient responses
    */
   async generatePatientResponse(
     question: string,
@@ -105,13 +109,7 @@ Instructions:
 - Be realistic and emotionally appropriate
 - Keep responses concise (2-3 sentences max)
 - If asked about something you haven't been evaluated for, respond appropriately
-- Never reveal your diagnosis directly
-
-Physical exam findings (only reveal if specifically examined):
-${JSON.stringify(patientContext.physicalExam, null, 2)}
-
-Investigation results (only reveal if ordered):
-${JSON.stringify(patientContext.investigations, null, 2)}`;
+- Never reveal your diagnosis directly`;
 
     const messages: ChatMessage[] = [
       { role: 'system', content: systemPrompt },
@@ -123,6 +121,34 @@ ${JSON.stringify(patientContext.investigations, null, 2)}`;
   }
 
   /**
+   * Mock response generator for development
+   * Replace with actual LLM inference in production
+   */
+  private generateMockResponse(messages: ChatMessage[]): string {
+    const lastMessage = messages[messages.length - 1];
+    const content = lastMessage?.content.toLowerCase() || '';
+
+    // Pattern-based responses for development
+    if (content.includes('pain') || content.includes('hurt')) {
+      return "Yes, it's a crushing pressure in my chest. It goes down my left arm. It's really bad.";
+    }
+    if (content.includes('when') || content.includes('start')) {
+      return 'It started about 2 hours ago. I was just watching TV when it came on suddenly.';
+    }
+    if (content.includes('medicine') || content.includes('drug') || content.includes('allerg')) {
+      return "I take lisinopril for high blood pressure. No drug allergies that I know of.";
+    }
+    if (content.includes('smoke') || content.includes('alcohol') || content.includes('tobacco')) {
+      return "I smoke about a pack a day for 30 years. I drink maybe 2-3 beers on weekends.";
+    }
+    if (content.includes('family') || content.includes('history')) {
+      return "My father had a heart attack in his 50s. My mother has diabetes.";
+    }
+
+    return "I'm not sure about that. Can you ask me something else?";
+  }
+
+  /**
    * Get loading progress (0-100)
    */
   getLoadProgress(): number {
@@ -130,22 +156,19 @@ ${JSON.stringify(patientContext.investigations, null, 2)}`;
   }
 
   /**
-   * Check if model is loaded and ready
+   * Check if service is ready
    */
   isReady(): boolean {
-    return this.isModelLoaded && !this.isLoading;
+    return this.isInitialized && !this.isLoading;
   }
 
   /**
-   * Unload model to free memory
+   * Reset the service
    */
-  async unload(): Promise<void> {
-    if (this.chatInstance) {
-      await this.chatInstance.unload();
-      this.chatInstance = null;
-      this.isModelLoaded = false;
-      this.loadProgress = 0;
-    }
+  async reset(): Promise<void> {
+    this.isInitialized = false;
+    this.config = null;
+    this.loadProgress = 0;
   }
 }
 

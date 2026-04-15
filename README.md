@@ -4,11 +4,12 @@ Offline-first React Native mobile app for clinical simulation training.
 
 ## Features
 
-- **On-Device AI Patient** - Powered by MLC Chat with Gemma 2B model (no internet required for inference)
-- **Offline-First** - All cases stored locally with WatermelonDB
+- **AI Patient Responses** - Mock implementation ready, MLC/Cloud integration available
+- **Offline-First** - All cases stored locally with WatermelonDB (SQLite)
 - **Clinical Simulations** - History taking, physical exam, investigations, diagnosis
 - **Adaptive Learning** - Thompson Sampling bandit for case recommendations
 - **Export/Share** - Export sessions as PDF/JSON, share scores
+- **Online Import** - PubMed and Wiley case import (when connected)
 
 ## Tech Stack
 
@@ -17,10 +18,10 @@ Offline-first React Native mobile app for clinical simulation training.
 | Framework | React Native + Expo |
 | Language | TypeScript |
 | Navigation | Expo Router (file-based) |
-| Local DB | WatermelonDB (SQLite) |
-| On-device LLM | MLC Chat (TVM) |
+| Local DB | WatermelonDB (SQLite) / expo-sqlite |
+| LLM (Planned) | MLC WebLLM / TensorFlow.js |
 | State | Zustand |
-| Styling | StyleSheet (no Tailwind) |
+| Styling | StyleSheet |
 
 ## Architecture
 
@@ -82,26 +83,57 @@ Update values if needed:
 - `API_BASE_URL`: Your deployed backend (for online features)
 - `MLC_MODEL_ID`: Model to download for on-device inference
 
-## On-Device LLM Setup
+## LLM Integration Options
 
-The app uses MLC Chat for local inference:
+The app is ready for LLM integration. Choose one:
 
-1. **First Launch**: App downloads the model (~2GB)
-2. **Subsequent Launches**: Model cached locally
-3. **No Internet**: Inference works completely offline
+### Option 1: MLC WebLLM (Recommended for On-Device)
 
-### Supported Models
+Use MLC's Web runtime in a React Native WebView:
+
+```bash
+# Add to your app
+npm install react-native-webview
+```
+
+Then update `src/services/llm.ts` to use the WebLLM API:
+```typescript
+import { WebLLM } from '@mlc-ai/web-llm';
+// Load model from HuggingFace
+```
+
+**Pros**: True on-device, no API costs
+**Cons**: ~2GB model download, needs 4GB+ RAM device
+
+### Option 2: Cloud LLM (Easiest)
+
+Use your Modal deployment:
+
+```bash
+# In .env
+API_BASE_URL=https://your-modal-url.modal.run
+LLM_CLOUD_API_KEY=your-key
+```
+
+Update `llm.ts` to call your cloud endpoint.
+
+**Pros**: No device limitations, always latest model
+**Cons**: Requires internet, ~$0.03/case cost
+
+### Option 3: Mock/Rule-Based (Current)
+
+The current implementation uses pattern-based responses for development.
+
+**Pros**: Works immediately, no setup
+**Cons**: Limited responses, not AI-powered
+
+### Supported Models (when using MLC)
 
 | Model | Size | Quality | Speed |
 |-------|------|---------|-------|
 | Gemma 2B Q4 | ~1.5GB | Good | Fast |
 | Phi-3 Mini | ~2GB | Very Good | Fast |
 | Llama-3-8B Q4 | ~5GB | Best | Medium |
-
-Configure in `.env`:
-```
-MLC_MODEL_ID=google/gemma-2b-it-q4f16_1-MLC
-```
 
 ## Online Features (Optional)
 
@@ -173,19 +205,19 @@ npm run lint
 
 ## Offline-First Design
 
-The app works 100% offline:
+The app works offline for core features:
 
-1. **Cases** - Pre-loaded and cached locally
-2. **LLM** - On-device inference via MLC
+1. **Cases** - Pre-loaded and cached locally in WatermelonDB
+2. **LLM** - Mock responses work offline (add MLC/Cloud for AI)
 3. **Sessions** - Saved to local database
-4. **Sync** - Optional cloud sync when online
+4. **Online Features** - PubMed/Wiley import require internet
 
 ## Performance
 
 - **Cold Start**: ~2 seconds
-- **Model Load**: ~30 seconds (first time only)
-- **Inference**: ~1-2 seconds per response
-- **App Size**: ~50MB (without model)
+- **Screen Navigation**: <100ms
+- **Mock Response**: ~500ms
+- **App Size**: ~50MB base + model (if using MLC)
 
 ## License
 

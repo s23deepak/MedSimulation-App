@@ -35,7 +35,7 @@
     "expo-file-system": "~17.0.0",
     "expo-sharing": "~12.0.0",
     "expo-document-picker": "~12.0.0",
-    "@mlc-ai/mlc-chat": "^0.1.0",
+    "expo-sqlite": "~14.0.0",
     "watermelondb": "^0.27.1",
     "@nozbe/watermelondb": "^0.27.1",
     "@nozbe/with-observables": "^1.4.0",
