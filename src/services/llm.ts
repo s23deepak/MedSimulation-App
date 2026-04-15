@@ -110,71 +110,33 @@ class LLMServiceClass {
 
   /**
    * Call local FastAPI backend (MedSimulation server)
+   * Uses the simulation engine's ask_history endpoint (same as web PWA)
    */
-  private async callLocalBackend(
+  async callLocalBackendDirect(
     question: string,
-    patientContext: PatientContext,
-    conversationHistory: ChatMessage[],
-    sessionId?: string
+    sessionId: string | null
   ): Promise<string> {
     try {
       const baseUrl = this.config!.localBaseUrl!;
 
-      // If we have a session ID, use the actual simulation API
-      if (sessionId) {
-        const response = await fetch(`${baseUrl}/api/simulation/history`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id: sessionId,
-            question: question,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Local backend error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        return data.response;
-      }
-
-      // Otherwise, use the LLM endpoint directly
-      const systemPrompt = `You are a standardized patient in a clinical simulation.
-Role: ${patientContext.presentation}
-
-Instructions:
-- Respond as the patient would, based on your condition
-- Only reveal information that would be discovered through the asked question
-- Be realistic and emotionally appropriate
-- Keep responses concise (2-3 sentences max)
-- If asked about something you haven't been evaluated for, respond appropriately
-- Never reveal your diagnosis directly`;
-
-      const messages: ChatMessage[] = [
-        { role: 'system', content: systemPrompt },
-        ...conversationHistory,
-        { role: 'user', content: question },
-      ];
-
-      const response = await fetch(`${baseUrl}/api/llm/chat`, {
+      const response = await fetch(`${baseUrl}/api/simulation/history`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages }),
+        body: JSON.stringify({
+          session_id: sessionId || 'mobile-session',
+          question: question,
+        }),
       });
 
       if (!response.ok) {
-        // Fallback to mock if backend fails
-        console.warn('Local backend failed, falling back to mock');
-        return this.generateMockResponse(question, patientContext, conversationHistory);
+        throw new Error(`Local backend error: ${response.status}`);
       }
 
       const data = await response.json();
-      return data.content || data.response;
+      return data.response;
     } catch (error) {
       console.error('Local backend call failed:', error);
-      // Fallback to mock on network errors
-      return this.generateMockResponse(question, patientContext, conversationHistory);
+      throw error;
     }
   }
 

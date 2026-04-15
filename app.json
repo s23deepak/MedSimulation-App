@@ -40,7 +40,11 @@
     "extra": {
       "eas": {
         "projectId": "your-project-id"
-      }
+      },
+      "LLM_MODE": "local",
+      "LOCAL_BACKEND_URL": "http://localhost:8000",
+      "CLOUD_API_URL": "",
+      "MLC_MODEL_ID": "google/gemma-2b-it-q4f16_1-MLC"
     }
   }
 }
