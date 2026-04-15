@@ -36,7 +36,6 @@
     "expo-sharing": "~12.0.0",
     "expo-document-picker": "~12.0.0",
     "expo-sqlite": "~14.0.0",
-    "watermelondb": "^0.27.1",
     "@nozbe/watermelondb": "^0.27.1",
     "@nozbe/with-observables": "^1.4.0",
     "axios": "^1.6.0",
