@@ -1,29 +1,28 @@
 /**
  * On-Device LLM Service
  *
- * Options for on-device inference:
- *
- * 1. MLC Chat (Recommended) - Use via web runtime
- *    - Add <script src="https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm"></script> to WebView
- *    - Load models from HuggingFace
- *
- * 2. TensorFlow.js + React Native
- *    - Use @tensorflow/tfjs-react-native
- *    - Convert models to TensorFlow Lite format
- *
- * 3. Cloud Fallback (Current Implementation)
- *    - Use Modal/Together AI when offline not available
- *
- * For now, this service provides a mock implementation for development.
- * Replace with actual MLC integration when ready.
+ * Supports four modes:
+ * 1. Local FastAPI Backend - Connect to MedSimulation server on same network
+ * 2. Cloud API - Modal/Together AI for pay-per-use inference
+ * 3. MLC WebLLM - True on-device via WebView (requires model download)
+ * 4. Mock/Rule-Based - Fallback for development without backend
  */
 
+import { Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system';
+
+export type LLMMode = 'local' | 'cloud' | 'mlc' | 'mock';
+
 export interface LLMConfig {
-  modelId: string;
-  modelUrl?: string;
-  useCloudFallback?: boolean;
-  cloudUrl?: string;
+  mode: LLMMode;
+  // Local backend
+  localBaseUrl?: string;
+  // Cloud API
+  cloudApiUrl?: string;
   cloudApiKey?: string;
+  // MLC WebLLM (on-device)
+  mlcModelId?: string;
+  mlcModelUrl?: string;
 }
 
 export interface ChatMessage {
@@ -31,16 +30,24 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface PatientContext {
+  presentation: string;
+  physicalExam: Record<string, string>;
+  investigations: Record<string, string>;
+}
+
+// MLC WebView bridge (lazy loaded)
+let MLCWebViewInstance: any = null;
+
 class LLMServiceClass {
   private isInitialized = false;
   private config: LLMConfig | null = null;
   private isLoading = false;
   private loadProgress = 0;
+  private mlcReady = false;
 
   /**
-   * Initialize the LLM service
-   * For MLC: Downloads and loads model
-   * For cloud: Validates credentials
+   * Initialize the LLM service with configuration
    */
   async initialize(config: LLMConfig): Promise<void> {
     if (this.isInitialized) return;
@@ -50,14 +57,22 @@ class LLMServiceClass {
     this.config = config;
 
     try {
-      // Simulate model loading progress
+      // Validate configuration based on mode
+      if (config.mode === 'local' && !config.localBaseUrl) {
+        throw new Error('localBaseUrl is required for local mode');
+      }
+      if (config.mode === 'cloud' && !config.cloudApiUrl) {
+        throw new Error('cloudApiUrl is required for cloud mode');
+      }
+
+      // Simulate initialization progress
       for (let i = 0; i <= 100; i += 10) {
         this.loadProgress = i;
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 50));
       }
 
       this.isInitialized = true;
-      console.log('LLM Service initialized with config:', config.modelId);
+      console.log(`LLM Service initialized in ${config.mode} mode`);
     } catch (error) {
       console.error('Failed to initialize LLM:', error);
       throw error;
@@ -67,40 +82,65 @@ class LLMServiceClass {
   }
 
   /**
-   * Generate a response for a chat message
-   *
-   * In production, this would:
-   * - Use MLC WebLLM for on-device inference
-   * - Fall back to cloud API if configured
+   * Generate response for patient simulation
+   * Routes to appropriate backend based on mode
    */
-  async chat(messages: ChatMessage[], temperature: number = 0.7): Promise<string> {
+  async generatePatientResponse(
+    question: string,
+    patientContext: PatientContext,
+    conversationHistory: ChatMessage[],
+    sessionId?: string
+  ): Promise<string> {
     if (!this.isInitialized) {
       throw new Error('LLM not initialized. Call initialize() first.');
     }
 
-    // TODO: Implement actual MLC/TFLite inference
-    // For now, return a mock response
-    console.log('Chat messages:', messages);
-
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    return this.generateMockResponse(messages);
+    switch (this.config?.mode) {
+      case 'local':
+        return this.callLocalBackend(question, patientContext, conversationHistory, sessionId);
+      case 'cloud':
+        return this.callCloudApi(question, patientContext, conversationHistory);
+      case 'mlc':
+        return this.callMLCWebLLM(question, patientContext, conversationHistory);
+      case 'mock':
+      default:
+        return this.generateMockResponse(question, patientContext, conversationHistory);
+    }
   }
 
   /**
-   * Generate response for patient simulation
+   * Call local FastAPI backend (MedSimulation server)
    */
-  async generatePatientResponse(
+  private async callLocalBackend(
     question: string,
-    patientContext: {
-      presentation: string;
-      physicalExam: Record<string, string>;
-      investigations: Record<string, string>;
-    },
-    conversationHistory: ChatMessage[]
+    patientContext: PatientContext,
+    conversationHistory: ChatMessage[],
+    sessionId?: string
   ): Promise<string> {
-    const systemPrompt = `You are a standardized patient in a clinical simulation.
+    try {
+      const baseUrl = this.config!.localBaseUrl!;
+
+      // If we have a session ID, use the actual simulation API
+      if (sessionId) {
+        const response = await fetch(`${baseUrl}/api/simulation/history`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: sessionId,
+            question: question,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Local backend error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        return data.response;
+      }
+
+      // Otherwise, use the LLM endpoint directly
+      const systemPrompt = `You are a standardized patient in a clinical simulation.
 Role: ${patientContext.presentation}
 
 Instructions:
@@ -111,38 +151,194 @@ Instructions:
 - If asked about something you haven't been evaluated for, respond appropriately
 - Never reveal your diagnosis directly`;
 
+      const messages: ChatMessage[] = [
+        { role: 'system', content: systemPrompt },
+        ...conversationHistory,
+        { role: 'user', content: question },
+      ];
+
+      const response = await fetch(`${baseUrl}/api/llm/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages }),
+      });
+
+      if (!response.ok) {
+        // Fallback to mock if backend fails
+        console.warn('Local backend failed, falling back to mock');
+        return this.generateMockResponse(question, patientContext, conversationHistory);
+      }
+
+      const data = await response.json();
+      return data.content || data.response;
+    } catch (error) {
+      console.error('Local backend call failed:', error);
+      // Fallback to mock on network errors
+      return this.generateMockResponse(question, patientContext, conversationHistory);
+    }
+  }
+
+  /**
+   * Call MLC WebLLM for on-device inference
+   * Uses WebView-based MLC Chat component
+   */
+  private async callMLCWebLLM(
+    question: string,
+    patientContext: PatientContext,
+    conversationHistory: ChatMessage[]
+  ): Promise<string> {
+    if (!this.mlcReady) {
+      throw new Error('MLC WebLLM not ready - model still loading');
+    }
+
+    const systemPrompt = `You are a standardized patient in a clinical simulation.
+Role: ${patientContext.presentation}
+
+Instructions:
+- Respond as the patient would, based on your condition
+- Only reveal information that would be discovered through the asked question
+- Be realistic and emotionally appropriate
+- Keep responses concise (2-3 sentences max)
+- Never reveal your diagnosis directly`;
+
     const messages: ChatMessage[] = [
       { role: 'system', content: systemPrompt },
       ...conversationHistory,
       { role: 'user', content: question },
     ];
 
-    return this.chat(messages, 0.7);
+    // Format as prompt for MLC
+    const prompt = messages
+      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+      .join('\n\n');
+
+    try {
+      // Use WebView bridge to communicate with MLC
+      const response = await this.sendMLCMessage(prompt);
+      return response;
+    } catch (error) {
+      console.error('MLC WebLLM failed:', error);
+      // Fallback to mock
+      return this.generateMockResponse(question, patientContext, conversationHistory);
+    }
+  }
+
+  /**
+   * Send message to MLC WebView and get response
+   */
+  private async sendMLCMessage(prompt: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      // This would be called from the MLCChatView component
+      // For now, we'll use a placeholder that will be replaced by actual WebView bridge
+      if (MLCWebViewInstance) {
+        MLCWebViewInstance.generateResponse(prompt)
+          .then(resolve)
+          .catch(reject);
+      } else {
+        reject(new Error('MLC WebView not initialized'));
+      }
+    });
+  }
+
+  /**
+   * Set the MLC WebView instance for communication
+   */
+  setMLCWebViewInstance(instance: any) {
+    MLCWebViewInstance = instance;
+  }
+
+  /**
+   * Mark MLC as ready after model loads
+   */
+  setMLCReady(ready: boolean) {
+    this.mlcReady = ready;
+  }
+
+  /**
+   * Call cloud API (Modal/Together AI)
+   */
+  private async callCloudApi(
+    question: string,
+    patientContext: PatientContext,
+    conversationHistory: ChatMessage[]
+  ): Promise<string> {
+    try {
+      const systemPrompt = `You are a standardized patient in a clinical simulation.
+Role: ${patientContext.presentation}
+
+Instructions:
+- Respond as the patient would, based on your condition
+- Only reveal information that would be discovered through the asked question
+- Be realistic and emotionally appropriate
+- Keep responses concise (2-3 sentences max)
+- Never reveal your diagnosis directly`;
+
+      const messages: ChatMessage[] = [
+        { role: 'system', content: systemPrompt },
+        ...conversationHistory,
+        { role: 'user', content: question },
+      ];
+
+      const response = await fetch(this.config!.cloudApiUrl!, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.config!.cloudApiKey && {
+            'Authorization': `Bearer ${this.config!.cloudApiKey}`,
+          }),
+        },
+        body: JSON.stringify({
+          model: 'MedGemma-4B',
+          messages,
+          temperature: 0.7,
+          max_tokens: 150,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Cloud API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      return data.choices?.[0]?.message?.content || data.response || '';
+    } catch (error) {
+      console.error('Cloud API call failed:', error);
+      // Fallback to mock on network errors
+      return this.generateMockResponse(question, patientContext, conversationHistory);
+    }
   }
 
   /**
    * Mock response generator for development
-   * Replace with actual LLM inference in production
    */
-  private generateMockResponse(messages: ChatMessage[]): string {
-    const lastMessage = messages[messages.length - 1];
-    const content = lastMessage?.content.toLowerCase() || '';
+  private generateMockResponse(
+    question: string,
+    patientContext: PatientContext,
+    conversationHistory: ChatMessage[]
+  ): string {
+    const content = question.toLowerCase();
 
     // Pattern-based responses for development
-    if (content.includes('pain') || content.includes('hurt')) {
+    if (content.includes('pain') || content.includes('hurt') || content.includes('pressure')) {
       return "Yes, it's a crushing pressure in my chest. It goes down my left arm. It's really bad.";
     }
-    if (content.includes('when') || content.includes('start')) {
+    if (content.includes('when') || content.includes('start') || content.includes('begin')) {
       return 'It started about 2 hours ago. I was just watching TV when it came on suddenly.';
     }
-    if (content.includes('medicine') || content.includes('drug') || content.includes('allerg')) {
+    if (content.includes('medicine') || content.includes('drug') || content.includes('allerg') || content.includes('take')) {
       return "I take lisinopril for high blood pressure. No drug allergies that I know of.";
     }
-    if (content.includes('smoke') || content.includes('alcohol') || content.includes('tobacco')) {
+    if (content.includes('smoke') || content.includes('alcohol') || content.includes('tobacco') || content.includes('drink')) {
       return "I smoke about a pack a day for 30 years. I drink maybe 2-3 beers on weekends.";
     }
     if (content.includes('family') || content.includes('history')) {
       return "My father had a heart attack in his 50s. My mother has diabetes.";
+    }
+    if (content.includes('name') || content.includes('age')) {
+      return "I'm 58 years old. You can call me John.";
+    }
+    if (content.includes('what') || content.includes('happen') || content.includes('wrong')) {
+      return "My chest hurts real bad. I can barely catch my breath.";
     }
 
     return "I'm not sure about that. Can you ask me something else?";
@@ -163,12 +359,31 @@ Instructions:
   }
 
   /**
+   * Get current mode
+   */
+  getMode(): LLMMode | null {
+    return this.config?.mode || null;
+  }
+
+  /**
    * Reset the service
    */
   async reset(): Promise<void> {
     this.isInitialized = false;
     this.config = null;
     this.loadProgress = 0;
+  }
+
+  /**
+   * Switch mode dynamically
+   */
+  async switchMode(newMode: LLMMode, newConfig?: Partial<LLMConfig>): Promise<void> {
+    await this.reset();
+    await this.initialize({
+      ...this.config,
+      ...newConfig,
+      mode: newMode,
+    });
   }
 }
 

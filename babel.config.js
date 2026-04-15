@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 module.exports = function (api) {
   api.cache(true);
   return {
@@ -17,6 +19,7 @@ module.exports = function (api) {
             '@store': './src/store',
             '@types': './src/types',
             '@utils': './src/utils',
+            '@config': './src/config',
           },
         },
       ],
