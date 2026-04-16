@@ -17,6 +17,7 @@ import {
   Image,
   Modal,
   Alert,
+  Linking,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -829,6 +830,43 @@ export default function SimulationScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Footer */}
+      <View style={styles.footer}>
+        <View style={styles.footerContent}>
+          <View style={styles.footerLeft}>
+            <Text style={styles.footerLogo}>&#9877;</Text>
+            <Text style={styles.footerText}>MedSimulation</Text>
+          </View>
+          <View style={styles.footerCenter}>
+            <Text style={styles.footerCopyright}>&copy; 2026 Deepak Swaminathan</Text>
+          </View>
+          <View style={styles.footerRight}>
+            <TouchableOpacity
+              onPress={() => {
+                // Open LinkedIn in browser
+                Linking.openURL('https://www.linkedin.com/in/deepak-swaminathan-90a707153/').catch(() => {
+                  Alert.alert('Info', 'LinkedIn: linkedin.com/in/deepak-swaminathan-90a707153/');
+                });
+              }}
+              style={styles.footerLink}
+            >
+              <Text style={styles.footerIcon}>in</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                // Open email
+                Linking.openURL('mailto:23.deepak.s@gmail.com').catch(() => {
+                  Alert.alert('Info', 'Email: 23.deepak.s@gmail.com');
+                });
+              }}
+              style={styles.footerLink}
+            >
+              <Text style={styles.footerIcon}>✉</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
     </SafeAreaView>
   );
 }
@@ -1258,6 +1296,55 @@ const styles = StyleSheet.create({
   submitFeedbackButtonText: {
     color: '#fff',
     fontSize: 16,
+    fontWeight: '600',
+  },
+
+  // Footer
+  footer: {
+    backgroundColor: '#f1f5f9',
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  footerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  footerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  footerLogo: {
+    fontSize: 18,
+    color: '#2563eb',
+  },
+  footerText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0f172a',
+  },
+  footerCenter: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  footerCopyright: {
+    fontSize: 11,
+    color: '#64748b',
+  },
+  footerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  footerLink: {
+    padding: 4,
+  },
+  footerIcon: {
+    fontSize: 16,
+    color: '#64748b',
     fontWeight: '600',
   },
 });
