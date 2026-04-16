@@ -38,6 +38,7 @@ export default function HomeScreen() {
   const [cases, setCases] = useState<Case[]>([]);
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
+  const [newCaseAdded, setNewCaseAdded] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'checking' | 'connected' | 'offline'>('checking');
 
@@ -66,10 +67,23 @@ export default function HomeScreen() {
     try {
       const config = getLLMConfig();
       const response = await fetch(`${config.localBaseUrl}/api/cases/recommended?limit=10`);
+      console.log('Load cases response status:', response.status);
       if (response.ok) {
         const data = await response.json();
-        setCases(data);
+        console.log('Loaded cases:', data.length, 'cases');
+        // Map backend difficulty (beginner/intermediate/advanced) to app format (easy/medium/hard)
+        const mappedCases = data.map((c: any) => ({
+          id: c.case_id || c.id,
+          case_id: c.case_id,
+          title: c.title,
+          specialty: c.specialty,
+          difficulty: mapDifficulty(c.difficulty),
+          source: c._source || c.source,
+        }));
+        console.log('Mapped cases:', mappedCases.map(c => `${c.case_id} (${c.difficulty})`));
+        setCases(mappedCases);
       } else {
+        console.warn('API returned non-OK status, using mock data');
         // Fallback to mock data
         setCases(getMockCases());
       }
@@ -79,6 +93,15 @@ export default function HomeScreen() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  };
+
+  const mapDifficulty = (difficulty: string): 'easy' | 'medium' | 'hard' => {
+    switch (difficulty?.toLowerCase()) {
+      case 'beginner': return 'easy';
+      case 'intermediate': return 'medium';
+      case 'advanced': return 'hard';
+      default: return 'medium';
     }
   };
 
@@ -97,6 +120,7 @@ export default function HomeScreen() {
     setSearching(true);
     try {
       const config = getLLMConfig();
+      console.log('Generating case for:', searchQuery, 'source:', searchSource);
       const response = await fetch(`${config.localBaseUrl}/api/cases/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -106,20 +130,46 @@ export default function HomeScreen() {
         }),
       });
 
+      console.log('Response status:', response.status);
+
       if (response.ok) {
         const result = await response.json();
-        Alert.alert(
-          'Case Generated',
-          `"${result.title}" has been added to your cases.`,
-          [
-            { text: 'Start Now', onPress: () => router.push(`/simulation?caseId=${result.case_id}`) },
-            { text: 'Later', style: 'cancel' },
-          ]
-        );
-        // Reload cases
-        await loadCases();
+
+        // Fetch the full case data directly by ID
+        const config = getLLMConfig();
+        const caseResponse = await fetch(`${config.localBaseUrl}/api/cases/${result.case_id}`);
+
+        if (caseResponse.ok) {
+          const fullCase = await caseResponse.json();
+
+          // Map to our format and add to top of list
+          const mappedCase = {
+            id: fullCase.case_id,
+            case_id: fullCase.case_id,
+            title: fullCase.title,
+            specialty: fullCase.specialty,
+            difficulty: mapDifficulty(fullCase.difficulty),
+            source: fullCase.source || 'ai_generated',
+          };
+
+          // Update state - this WILL trigger re-render
+          setCases((prevCases: Case[]) => {
+            const filtered = prevCases.filter(c => c.case_id !== result.case_id);
+            return [mappedCase, ...filtered];
+          });
+
+          // Set visual indicator that new case was added
+          setNewCaseAdded(result.case_id);
+
+          // Clear the "new" indicator after 3 seconds
+          setTimeout(() => setNewCaseAdded(null), 3000);
+        }
+
+        // Auto-open the simulation after case generation
+        router.push(`/simulation?caseId=${result.case_id}`);
       } else {
         const error = await response.text();
+        console.error('Generation failed:', error);
         Alert.alert('Error', `Failed to generate case: ${error}`);
       }
     } catch (error) {
@@ -143,22 +193,28 @@ export default function HomeScreen() {
     }
   };
 
-  const renderCase = ({ item }: { item: Case }) => (
-    <TouchableOpacity
-      style={styles.caseCard}
-      onPress={() => handleCasePress(item.case_id)}
-      activeOpacity={0.7}
-    >
-      <View style={styles.caseHeader}>
-        <Text style={styles.caseTitle}>{item.title}</Text>
-        <View style={[styles.difficultyBadge, { backgroundColor: getDifficultyColor(item.difficulty) }]}>
-          <Text style={styles.difficultyText}>{item.difficulty}</Text>
+  const renderCase = ({ item }: { item: Case }) => {
+    const isNew = newCaseAdded === item.case_id;
+    return (
+      <TouchableOpacity
+        style={[styles.caseCard, isNew && styles.newCaseCard]}
+        onPress={() => handleCasePress(item.case_id)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.caseHeader}>
+          <Text style={styles.caseTitle}>{item.title}</Text>
+          <View style={styles.badgeRow}>
+            {isNew && <View style={styles.newBadge}><Text style={styles.newBadgeText}>NEW</Text></View>}
+            <View style={[styles.difficultyBadge, { backgroundColor: getDifficultyColor(item.difficulty) }]}>
+              <Text style={styles.difficultyText}>{item.difficulty}</Text>
+            </View>
+          </View>
         </View>
-      </View>
-      <Text style={styles.caseSpecialty}>{item.specialty}</Text>
-      {item.source && <Text style={styles.caseSource}>Source: {item.source}</Text>}
-    </TouchableOpacity>
-  );
+        <Text style={styles.caseSpecialty}>{item.specialty}</Text>
+        {item.source && <Text style={styles.caseSource}>Source: {item.source}</Text>}
+      </TouchableOpacity>
+    );
+  };
 
   const renderLoading = () => (
     <SafeAreaView style={styles.container}>
@@ -246,7 +302,9 @@ export default function HomeScreen() {
             data={cases}
             renderItem={renderCase}
             keyExtractor={(item) => item.id}
+            key={`cases-${cases.length}-${cases[0]?.case_id || 'empty'}`}
             scrollEnabled={false}
+            extraData={{ length: cases.length, firstId: cases[0]?.case_id }}
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={loadCases} />
             }
@@ -336,7 +394,15 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e2e8f0',
   },
+  newCaseCard: {
+    backgroundColor: '#f0fdf4',
+    borderColor: '#22c55e',
+    borderWidth: 2,
+  },
   caseHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 },
+  badgeRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },
+  newBadge: { backgroundColor: '#22c55e', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  newBadgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
   caseTitle: { flex: 1, fontSize: 16, fontWeight: '600', color: '#0f172a', marginRight: 8 },
   difficultyBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
   difficultyText: { color: '#fff', fontSize: 11, fontWeight: '600', textTransform: 'uppercase' },

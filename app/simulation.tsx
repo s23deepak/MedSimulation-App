@@ -16,6 +16,7 @@ import {
   ActivityIndicator,
   Image,
   Modal,
+  Alert,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -37,7 +38,8 @@ interface Vitals {
 }
 
 interface ImagingStudy {
-  id: string;
+  study_id: string;
+  id?: string;
   modality: string;
   description: string;
   image_url?: string;
@@ -64,6 +66,14 @@ export default function SimulationScreen() {
   const [imagingStudies, setImagingStudies] = useState<ImagingStudy[]>([]);
   const [selectedImage, setSelectedImage] = useState<ImagingStudy | null>(null);
   const [config, setConfig] = useState<any>(null);
+
+  // Submission state
+  const [submitModalVisible, setSubmitModalVisible] = useState(false);
+  const [diagnosis, setDiagnosis] = useState('');
+  const [managementStep, setManagementStep] = useState('');
+  const [managementSteps, setManagementSteps] = useState<string[]>([]);
+  const [managementInputRaw, setManagementInputRaw] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   // Case data
   const [caseData, setCaseData] = useState({
@@ -100,15 +110,32 @@ export default function SimulationScreen() {
 
         if (startResponse.ok) {
           const session = await startResponse.json();
+
+          // Check if session was created successfully (session_id should exist)
+          if (!session.session_id) {
+            console.error('Session creation failed - no session_id returned');
+            Alert.alert('Error', 'Failed to start simulation. Case may not exist.');
+            return;
+          }
+
           setSessionId(session.session_id);
           setSessionData(session);
           setCaseData({
-            title: session.case?.title || 'Clinical Case',
-            specialty: session.case?.specialty || '',
-            difficulty: session.case?.difficulty || '',
-            presentation: session.case?.presentation || '',
+            title: session.case_title || session.case?.title || 'Clinical Case',
+            specialty: session.specialty || session.case?.specialty || '',
+            difficulty: session.difficulty || session.case?.difficulty || '',
+            presentation: session.presentation || session.case?.presentation || '',
           });
-          setVitals(session.vitals || {});
+          // Backend returns initial_vitals with keys like HR, BP, RR, SpO2, Temp, GCS
+          const rawVitals = session.initial_vitals || session.vitals || {};
+          // Map to mobile app expected format (bp, hr, rr, temp, spo2)
+          setVitals({
+            bp: rawVitals.BP ? `${rawVitals.BP} mmHg` : undefined,
+            hr: rawVitals.HR ? `${rawVitals.HR} bpm` : undefined,
+            rr: rawVitals.RR ? `${rawVitals.RR} /min` : undefined,
+            temp: rawVitals.Temp ? `${rawVitals.Temp} °C` : undefined,
+            spo2: rawVitals.SpO2 ? `${rawVitals.SpO2} %` : undefined,
+          });
           setImagingStudies(session.imaging_studies || []);
 
           // Add initial patient message
@@ -120,9 +147,14 @@ export default function SimulationScreen() {
               timestamp: new Date().toISOString(),
             },
           ]);
+        } else {
+          const errorText = await startResponse.text();
+          console.error('Session start failed:', startResponse.status, errorText);
+          Alert.alert('Error', `Failed to start simulation: ${startResponse.status}`);
         }
       } catch (error) {
         console.error('Failed to initialize session:', error);
+        Alert.alert('Error', 'Failed to connect to backend server.');
       }
     };
     initSession();
@@ -253,7 +285,7 @@ export default function SimulationScreen() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           session_id: sessionId || 'mobile-session',
-          study_id: study.id,
+          study_id: study.study_id,
         }),
       });
 
@@ -267,10 +299,81 @@ export default function SimulationScreen() {
     }
   };
 
-  const handleSubmit = async () => {
-    if (!config || !sessionId) return;
+  const handleSubmit = () => {
+    if (!sessionId) return;
+    // Scroll to assessment section or open modal
+    setSubmitModalVisible(true);
+  };
 
-    router.push(`/results?sessionId=${sessionId}&caseId=${caseId || 'SIM-001'}`);
+  const submitAssessment = async () => {
+    const trimmedDiagnosis = diagnosis.trim();
+    // Use managementInputRaw to parse steps fresh (in case inline form was used)
+    const stepsFromRaw = managementInputRaw.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+    const stepsToSubmit = stepsFromRaw.length > 0 ? stepsFromRaw : managementSteps;
+
+    console.log('=== Submit Assessment ===');
+    console.log('diagnosis state:', diagnosis);
+    console.log('trimmedDiagnosis:', trimmedDiagnosis);
+    console.log('managementInputRaw:', managementInputRaw);
+    console.log('managementSteps:', managementSteps);
+    console.log('stepsToSubmit:', stepsToSubmit);
+    console.log('sessionId:', sessionId);
+
+    if (!trimmedDiagnosis || stepsToSubmit.length === 0) {
+      Alert.alert(
+        'Missing Information',
+        `Diagnosis: ${trimmedDiagnosis ? '✓' : '✗'}\nManagement steps: ${stepsToSubmit.length > 0 ? '✓' : '✗'}`
+      );
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const requestBody = {
+        session_id: sessionId,
+        diagnosis: trimmedDiagnosis,
+        management: stepsToSubmit,
+      };
+      console.log('Request body:', JSON.stringify(requestBody, null, 2));
+
+      const response = await fetch(`${config.localBaseUrl}/api/simulation/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      });
+
+      console.log('Response status:', response.status);
+      const responseText = await response.text();
+      console.log('Response body:', responseText);
+
+      if (response.ok) {
+        const result = JSON.parse(responseText);
+        const percentage = result.scores?.percentage || 0;
+        const grade = result.scores?.grade || 'N/A';
+        console.log('Submission successful! Score:', percentage, 'Grade:', grade);
+
+        // Navigate directly to results
+        router.push(`/results?sessionId=${sessionId}&caseId=${caseId || 'SIM-001'}`);
+      } else {
+        Alert.alert('Error', `Server error (${response.status}): ${responseText}`);
+      }
+    } catch (error) {
+      console.error('Submit failed:', error);
+      Alert.alert('Error', 'Failed to submit assessment. Check console for details.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const addManagementStep = () => {
+    if (managementStep.trim()) {
+      setManagementSteps([...managementSteps, managementStep.trim()]);
+      setManagementStep('');
+    }
+  };
+
+  const removeManagementStep = (index: number) => {
+    setManagementSteps(managementSteps.filter((_, i) => i !== index));
   };
 
   const examSystems = [
@@ -487,7 +590,7 @@ export default function SimulationScreen() {
             ) : (
               imagingStudies.map((study) => (
                 <TouchableOpacity
-                  key={study.id}
+                  key={study.study_id}
                   style={styles.imagingCard}
                   onPress={() => handleViewImaging(study)}
                 >
@@ -552,10 +655,60 @@ export default function SimulationScreen() {
         )}
       </ScrollView>
 
-      {/* Submit Button */}
-      <View style={styles.submitContainer}>
-        <TouchableOpacity style={styles.submitButton} onPress={handleSubmit}>
-          <Text style={styles.submitButtonText}>Submit Assessment</Text>
+      {/* Clinical Assessment & Management Plan */}
+      <View style={styles.assessmentContainer}>
+        <Text style={styles.assessmentTitle}>Clinical Assessment & Management Plan</Text>
+
+        <View style={styles.assessmentContent}>
+          <View style={styles.diagnosisSection}>
+            <Text style={styles.assessmentLabel}>WORKING DIAGNOSIS</Text>
+            <TextInput
+              style={styles.diagnosisInputInline}
+              placeholder="Your primary diagnosis..."
+              value={diagnosis}
+              onChangeText={(text) => {
+                console.log('Diagnosis input changed:', text);
+                setDiagnosis(text);
+              }}
+              placeholderTextColor="#94a3b8"
+              autoComplete="off"
+              importantForAutofill="no"
+            />
+          </View>
+
+          <View style={styles.managementSection}>
+            <Text style={styles.assessmentLabel}>MANAGEMENT PLAN</Text>
+            <TextInput
+              style={styles.managementInputInline}
+              placeholder="List your management steps, one per line...&#10;e.g.&#10;Activate cath lab&#10;Aspirin 300mg + Ticagrelor 180mg&#10;IV heparin bolus"
+              value={managementInputRaw}
+              onChangeText={(text) => {
+                // Store raw input for display (preserves spaces)
+                setManagementInputRaw(text);
+                // Parse into steps for submission (split by newline, trim each)
+                const steps = text.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+                setManagementSteps(steps);
+              }}
+              placeholderTextColor="#94a3b8"
+              multiline
+              textAlignVertical="top"
+              autoComplete="off"
+              importantForAutofill="no"
+            />
+            <Text style={styles.managementTip}>Tip: Be specific — drug names, doses, timing, escalation.</Text>
+          </View>
+        </View>
+
+        <TouchableOpacity
+          style={[styles.submitFeedbackButton, (!diagnosis.trim() || managementSteps.length === 0) && styles.submitButtonDisabled]}
+          onPress={submitAssessment}
+          disabled={!diagnosis.trim() || managementSteps.length === 0}
+        >
+          {submitting ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Text style={styles.submitFeedbackButtonText}>Submit for Feedback</Text>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -592,6 +745,72 @@ export default function SimulationScreen() {
                   <Text style={styles.modalFindingsText}>{selectedImage.findings}</Text>
                 </View>
               )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Submission Modal */}
+      <Modal
+        visible={submitModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setSubmitModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, styles.submitModalContent]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Submit Assessment</Text>
+              <TouchableOpacity onPress={() => setSubmitModalVisible(false)}>
+                <Text style={styles.modalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.modalBody}>
+              <Text style={styles.submitLabel}>Diagnosis</Text>
+              <TextInput
+                style={styles.diagnosisInput}
+                placeholder="Enter your diagnosis"
+                value={diagnosis}
+                onChangeText={setDiagnosis}
+                multiline
+              />
+
+              <Text style={styles.submitLabel}>Management Plan</Text>
+              <View style={styles.managementSteps}>
+                {managementSteps.map((step, index) => (
+                  <View key={index} style={styles.managementStep}>
+                    <Text style={styles.managementStepText}>{step}</Text>
+                    <TouchableOpacity onPress={() => removeManagementStep(index)}>
+                      <Text style={styles.removeStep}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+              <View style={styles.addManagementRow}>
+                <TextInput
+                  style={styles.managementInput}
+                  placeholder="Add management step (e.g., 'Aspirin 325mg PO')"
+                  value={managementStep}
+                  onChangeText={setManagementStep}
+                  onSubmitEditing={addManagementStep}
+                  returnKeyType="done"
+                />
+                <TouchableOpacity style={styles.addButton} onPress={addManagementStep}>
+                  <Text style={styles.addButtonText}>Add</Text>
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity
+                style={[styles.submitAssessmentButton, submitting && styles.submitButtonDisabled]}
+                onPress={submitAssessment}
+                disabled={submitting}
+              >
+                {submitting ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.submitAssessmentButtonText}>Submit Assessment</Text>
+                )}
+              </TouchableOpacity>
             </ScrollView>
           </View>
         </View>
@@ -888,6 +1107,133 @@ const styles = StyleSheet.create({
   modalFindings: { marginTop: 16, padding: 12, backgroundColor: '#f8fafc', borderRadius: 8 },
   modalFindingsLabel: { fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 8 },
   modalFindingsText: { fontSize: 14, color: '#0f172a', lineHeight: 20 },
+
+  // Submission modal styles
+  submitModalContent: { maxHeight: '85%' },
+  submitLabel: { fontSize: 13, fontWeight: '600', color: '#0f172a', marginBottom: 8, marginTop: 8 },
+  diagnosisInput: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 12,
+    fontSize: 15,
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  managementSteps: { marginBottom: 8 },
+  managementStep: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#f0fdf4',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: '#22c55e',
+  },
+  managementStepText: { flex: 1, fontSize: 14, color: '#0f172a' },
+  removeStep: { fontSize: 18, color: '#ef4444', marginLeft: 8 },
+  addManagementRow: { flexDirection: 'row', gap: 8, marginBottom: 16 },
+  managementInput: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 10,
+    fontSize: 14,
+  },
+  addButton: {
+    backgroundColor: '#22c55e',
+    borderRadius: 10,
+    paddingHorizontal: 16,
+    justifyContent: 'center',
+  },
+  addButtonText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  submitAssessmentButton: {
+    backgroundColor: '#2563eb',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  submitButtonDisabled: { opacity: 0.6 },
+  submitAssessmentButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+
+  // Clinical Assessment section
+  assessmentContainer: {
+    backgroundColor: '#fff',
+    margin: 16,
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  assessmentTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#0f172a',
+    marginBottom: 16,
+  },
+  assessmentContent: {
+    flexDirection: 'row',
+    gap: 16,
+    marginBottom: 16,
+  },
+  diagnosisSection: {
+    flex: 1,
+  },
+  managementSection: {
+    flex: 1,
+  },
+  assessmentLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  diagnosisInputInline: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 12,
+    fontSize: 15,
+    minHeight: 44,
+  },
+  managementInputInline: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    padding: 12,
+    fontSize: 14,
+    minHeight: 120,
+  },
+  managementInputWeb: {
+    // Fix for React Native Web: ensure proper text input behavior
+    fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  },
+  managementTip: {
+    fontSize: 11,
+    color: '#94a3b8',
+    marginTop: 6,
+    fontStyle: 'italic',
+  },
+  submitFeedbackButton: {
+    backgroundColor: '#2563eb',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  submitFeedbackButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
 });
 
 const messageStyles = StyleSheet.create({

@@ -4,12 +4,40 @@ Offline-first React Native mobile app for clinical simulation training.
 
 ## Features
 
-- **AI Patient Responses** - Mock implementation ready, MLC/Cloud integration available
+- **AI Case Generation** - Generate custom cases from any medical topic (PubMed, Wiley, EndlessMedical, or AI-generated)
+- **Auto-Open Simulation** - Cases open automatically after generation for seamless workflow
+- **Difficulty Color Coding** - Green (Easy), Amber (Medium), Red (Hard) badges
+- **New Case Highlight** - Newly generated cases show green border + "NEW" badge
 - **Offline-First** - All cases stored locally with WatermelonDB (SQLite)
 - **Clinical Simulations** - History taking, physical exam, investigations, diagnosis
 - **Adaptive Learning** - Thompson Sampling bandit for case recommendations
 - **Export/Share** - Export sessions as PDF/JSON, share scores
 - **Online Import** - PubMed and Wiley case import (when connected)
+
+## UX Decisions
+
+See [`UX_DECISIONS.md`](./UX_DECISIONS.md) for documented design decisions including:
+- Auto-open vs. confirmation dialog for case generation
+- FlatList rendering fixes for React Native Web
+- Difficulty color coding and mapping
+- API architecture decisions
+
+## Recent Updates (2026-04-16)
+
+### ✅ Fixed
+| Issue | Solution |
+|-------|----------|
+| Generated cases not appearing in list | Fetch full case by ID, prepend to list |
+| FlatList not re-rendering | Added `key` prop + `extraData` to force re-render |
+| Alert dialog interrupting flow | Changed to auto-open simulation |
+| Difficulty badges not showing | Mapped `beginner/intermediate/advanced` → `easy/medium/hard` |
+| CORS blocking requests | Changed to permissive `["*"]` for development |
+
+### 🆕 Added
+- Visual "NEW" indicator for newly generated cases (green border, badge, 3s highlight)
+- Detailed console logging for debugging generation flow
+- API endpoint `/api/cases/{case_id}` for fetching individual cases
+---
 
 ## Tech Stack
 
