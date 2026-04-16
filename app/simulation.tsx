@@ -81,6 +81,7 @@ export default function SimulationScreen() {
     specialty: '',
     difficulty: '',
     presentation: '',
+    learning_objectives: [] as string[],
   });
 
   // Timer effect
@@ -125,6 +126,7 @@ export default function SimulationScreen() {
             specialty: session.specialty || session.case?.specialty || '',
             difficulty: session.difficulty || session.case?.difficulty || '',
             presentation: session.presentation || session.case?.presentation || '',
+            learning_objectives: session.learning_objectives || session.case?.learning_objectives || [],
           });
           // Backend returns initial_vitals with keys like HR, BP, RR, SpO2, Temp, GCS
           const rawVitals = session.initial_vitals || session.vitals || {};
@@ -437,6 +439,18 @@ export default function SimulationScreen() {
           <Text style={styles.presentationLabel}>Initial Presentation</Text>
           <Text style={styles.presentationText}>{caseData.presentation}</Text>
         </View>
+
+        {/* Learning Objectives */}
+        {caseData.learning_objectives && caseData.learning_objectives.length > 0 && (
+          <View style={styles.learningObjectivesCard}>
+            <Text style={styles.learningObjectivesLabel}>Learning Objectives</Text>
+            {caseData.learning_objectives.map((obj, index) => (
+              <Text key={index} style={styles.learningObjectiveItem}>
+                • {obj}
+              </Text>
+            ))}
+          </View>
+        )}
 
         {/* Vitals Grid */}
         {Object.keys(vitals).length > 0 && (
@@ -864,6 +878,18 @@ const styles = StyleSheet.create({
   },
   presentationLabel: { fontSize: 11, fontWeight: '600', color: '#64748b', textTransform: 'uppercase', marginBottom: 8 },
   presentationText: { fontSize: 14, color: '#0f172a', lineHeight: 20 },
+
+  learningObjectivesCard: {
+    margin: 16,
+    marginBottom: 8,
+    padding: 16,
+    backgroundColor: '#f0f9ff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#bae6fd',
+  },
+  learningObjectivesLabel: { fontSize: 11, fontWeight: '600', color: '#0369a1', textTransform: 'uppercase', marginBottom: 12 },
+  learningObjectiveItem: { fontSize: 13, color: '#0c4a6e', lineHeight: 22, marginBottom: 4 },
 
   vitalsCard: {
     margin: 16,
